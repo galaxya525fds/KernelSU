@@ -1383,7 +1383,7 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 	mnt->mnt.mnt_root = root;
 	mnt->mnt.mnt_sb = root->d_sb;
 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
-#endif	
+#endif
 	mnt->mnt_parent = mnt;
 	lock_mount_hash();
 	list_add_tail(&mnt->mnt_instance, &root->d_sb->s_mounts);
@@ -2167,6 +2167,41 @@ static inline bool may_mandlock(void)
 	return false;
 #endif
 	return capable(CAP_SYS_ADMIN);
+}
+
+
+static int can_umount(const struct path *path, int flags)
+{
+	struct mount *mnt = real_mount(path->mnt);
+
+ if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+		return -EINVAL;
+ if (!may_mount())
+		return -EPERM;
+ if (path->dentry != path->mnt->mnt_root)
+		return -EINVAL;
+ if (!check_mnt(mnt))
+		return -EINVAL;
+ if (mnt->mnt.mnt_flags & MNT_LOCKED) /* Check optimistically */
+		return -EINVAL;
+ if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	  return 0;
+}
+
+int path_umount(struct path *path, int flags)
+{
+  struct mount *mnt = real_mount(path->mnt);
+ 	int ret;
+
+	ret = can_umount(path, flags);
+	if (!ret)
+	ret = do_umount(mnt, flags);
+
+	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
+	dput(path->dentry);
+	mntput_no_expire(mnt);
+	return ret;
 }
 
 /*
@@ -3132,7 +3167,7 @@ unlock:
 }
 
 #ifdef CONFIG_RKP_NS_PROT
-static void rkp_populate_sb(char *mount_point, struct vfsmount *mnt) 
+static void rkp_populate_sb(char *mount_point, struct vfsmount *mnt)
 {
 	if (!mount_point || !mnt)
 		return;
